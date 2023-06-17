@@ -1,4 +1,4 @@
-// Function to add a row in CSV File
+// Function to add an Array of Records in CSV File
 const addRecord = require('./Create_CSV/create_csv');
 
 module.exports.extractBillInfo = async function extractBillInfo(extractedJSON){
@@ -8,14 +8,15 @@ module.exports.extractBillInfo = async function extractBillInfo(extractedJSON){
 
         let data = extractedJSON[i];        // Current Invoice Object.
         let invoice = {};                   // To Store The Common Invoice Details For All Items.
+        let items = [];                     // To Store Item Details in the Invoice.
         const allRecords=[];                // To Store All the records from Current Invoive Object to enter in CSV File.
         let pos=0;                          // To Traverse The Text Elements in Order
 
         // EXTRACT FIELDS BASED ON BOUNDS
-        // For Customer and Invoice Description, Invoice Due Date and Invoice Tax
+        // For Customer Details, Invoice Description and Invoice Due Date
         let customer_desc = "", invoice_desc = "", invoice_due = "";
 
-        // Traversing Every Element and Filtering in respective category based on bounds
+        // Traversing Every Element and Filtering and Grouping in respective category based on Left bound/Alignment.
         data.forEach(element => {
             if(element.Bounds[0]==81.04800415039062){
                 customer_desc+=element.Text+' ';             // Customer Description
@@ -26,14 +27,12 @@ module.exports.extractBillInfo = async function extractBillInfo(extractedJSON){
             else if(element.Bounds[0]==412.8000030517578){
                 invoice_due+=element.Text+' ';            // Invoice Due Date
             }
-            else if(element.Bounds[0]==485.92999267578125 && !element.Text.startsWith('$')){
-                invoice.invoice__tax = parseInt(element.Text);          // Invoice Tax
-            }
         });
 
-        // For Customer Description.
-        customer_desc = customer_desc.replace(/\s+/g,' ').trim();
-        customer_desc = customer_desc.slice(7).trim().split(' ');
+        // Seperate Individual Fields From The Filtered Group.
+        // For Customer Details.
+        customer_desc = customer_desc.replace(/\s+/g,' ').trim();       // Remove Extra Space
+        customer_desc = customer_desc.slice(7).trim().split(' ');       // Remove 'BILL TO' Word from the string   
     
         invoice.customer__name = customer_desc[0] + " " + customer_desc[1];
     
@@ -59,11 +58,10 @@ module.exports.extractBillInfo = async function extractBillInfo(extractedJSON){
         // For Invoice Due Date
         invoice_due = invoice_due.replace(/\s+/g,' ').trim();
         invoice_due = invoice_due.split(' ')[3].trim();
-        invoice_due = invoice_due.split('-');
-        invoice.invoice__dueDate = `${parseInt(invoice_due[0])}-${parseInt(invoice_due[1])}-${parseInt(invoice_due[2])}`;
+        invoice.invoice__dueDate = invoice_due;
 
         
-        // EXTRACT FIELDS BASED ON position in JSON Object
+        // EXTRACT FIELDS BASED ON position/reltive order in JSON Object
         // For Business Name.
         invoice.business__name = data[pos++].Text.trim();
     
@@ -97,7 +95,7 @@ module.exports.extractBillInfo = async function extractBillInfo(extractedJSON){
         pos++;      // Skip The Business Title.
         invoice.business__description = data[pos++].Text.trim();
     
-        // For Items.
+        // For All Items.
         // Skipping all fields to reach first item.
         while(data[pos].Text==undefined || !data[pos].Text.startsWith('AMOUNT')){
             pos++;
@@ -105,19 +103,43 @@ module.exports.extractBillInfo = async function extractBillInfo(extractedJSON){
         pos++;
     
         while(1){
-            let item = {};
             if(data[pos].Text.startsWith('Subtotal')){
                 break;
             }
-    
+            let item = {};
             item.invoice__billDetails__name = data[pos++].Text.trim();
             item.invoice__billDetails__quantity = parseInt(data[pos++].Text.trim());
             item.invoice__billDetails__rate = parseInt(data[pos++].Text.trim());
+            items.push(item);
             pos++;
-    
-            allRecords.push({...invoice  , ...item});
         }
 
+        // For invoice Tax.
+        // Group All The Elements After Subtotal and then filter out the portion after '%' and Before 'Total Due'.
+        let tax = "";
+        while(pos!=data.length){
+            if(!data[pos].Text.startsWith('$')){
+                tax+=data[pos++].Text;
+            }
+            else{
+                pos++;
+            }
+        }
+        
+        if(tax.indexOf('%')==-1){
+            invoice.invoice__tax = "";      // The tax Element isn't Identified In a PDF so, Leave it Blank
+        }
+        else{
+            tax = tax.slice(tax.indexOf('%')+1 , tax.indexOf('Total Due')).trim();
+            invoice.invoice__tax = parseInt(tax);
+        }
+
+
+        /* Adding Each Record of Current PDF Object in an Array and then Calling the Function 
+           To Add Array of objects in CSV File. */
+        items.forEach((item)=>{
+            allRecords.push({...invoice  , ...item});
+        })
         await addRecord(allRecords);
     }
 
